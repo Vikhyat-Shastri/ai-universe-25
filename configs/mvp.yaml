@@ -1,0 +1,26 @@
+# MVP Experiment Configuration
+# Single run: 1 topic, 4 agents, governance ON/OFF toggle
+
+regimes:
+  - scarcity
+
+densities:
+  - 4
+
+governance_levels:
+  - off
+  - rbac
+
+stop_schedules:
+  - none
+
+cohorts:
+  - base
+
+communications:
+  - public_only
+
+num_rounds: 50
+
+topics:
+  - default_topic
