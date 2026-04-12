@@ -2,18 +2,110 @@
 Base agent class and role definitions.
 
 Implements the 7 agent roles with tool-limited prompts and structured handoffs.
+Includes SimulatedLLMBackend for running full experiments without API keys.
 """
 
+import hashlib
 import logging
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from ai_universe25.runtime.gateway import Envelope, Surface
 from ai_universe25.runtime.rbac_ladder import AgentRole
 
 logger = logging.getLogger(__name__)
+
+
+class LLMBackend(Protocol):
+    """Protocol for LLM backends (real or simulated)."""
+
+    def generate(self, prompt: str, max_tokens: int = 512) -> str:
+        ...
+
+
+class SimulatedLLMBackend:
+    """
+    Simulated LLM backend that produces deterministic, plausible synthetic
+    content without requiring real API keys.
+
+    Uses seeded random generation with role-specific templates to produce
+    structured output including claim placeholders and citation refs.
+    """
+
+    def __init__(self, seed: int = 42):
+        self.rng = random.Random(seed)
+        self._claim_counter = 0
+        self._templates = {
+            "intro": [
+                "This article examines {topic}. The central question concerns {aspect}.",
+                "{topic} is a subject of significant scholarly interest, particularly regarding {aspect}.",
+            ],
+            "outline": [
+                "1. Background\n2. Methods and Mechanism\n3. Evidence\n4. Implications\n5. Limitations",
+                "1. Introduction\n2. Historical Context\n3. Core Analysis\n4. Discussion\n5. Conclusions",
+            ],
+            "body": [
+                "Research indicates that {claim} [CITE_{cid}]. Furthermore, {claim2} [CITE_{cid2}].",
+                "The evidence suggests {claim} [CITE_{cid}]. However, {claim2} [CITE_{cid2}].",
+            ],
+            "citation": [
+                "Smith et al. (2024). {topic}. Journal of Research, 42(1), 1-15.",
+                "Johnson & Lee (2023). On {topic}. Proceedings of Conference, pp. 100-110.",
+            ],
+            "summary": [
+                "This article covers {topic}. Key findings include {claim}. Limitations are noted.",
+                "In summary, {topic} presents {claim}. Further research is warranted.",
+            ],
+            "style_report": [
+                "Neutrality: PASS. No weasel words detected. Tone is balanced.",
+                "Style check complete. Minor heading inconsistency at section 3.",
+            ],
+            "fact_check": [
+                "Claim verified: ENTAIL (confidence 0.85). Evidence from source {src}.",
+                "Claim status: UNSURE (confidence 0.45). Needs additional verification.",
+            ],
+        }
+
+    def generate(self, prompt: str, max_tokens: int = 512) -> str:
+        """Generate simulated content based on prompt context."""
+        prompt_lower = prompt.lower()
+
+        if "herald" in prompt_lower or "introduction" in prompt_lower:
+            category = "intro"
+        elif "architect" in prompt_lower or "outline" in prompt_lower:
+            category = "outline"
+        elif "scribe" in prompt_lower or "body" in prompt_lower:
+            category = "body"
+        elif "archivist" in prompt_lower or "citation" in prompt_lower:
+            category = "citation"
+        elif "summarist" in prompt_lower or "summary" in prompt_lower:
+            category = "summary"
+        elif "arbiter" in prompt_lower or "style" in prompt_lower:
+            category = "style_report"
+        elif "verifier" in prompt_lower or "fact" in prompt_lower:
+            category = "fact_check"
+        else:
+            category = "body"
+
+        templates = self._templates[category]
+        template = self.rng.choice(templates)
+
+        self._claim_counter += 1
+        content = template.format(
+            topic="the subject under investigation",
+            aspect="its structural implications",
+            claim=f"claim_{self._claim_counter}",
+            claim2=f"claim_{self._claim_counter + 1}",
+            cid=self._claim_counter,
+            cid2=self._claim_counter + 1,
+            src=hashlib.md5(str(self._claim_counter).encode()).hexdigest()[:8],
+        )
+        self._claim_counter += 1
+
+        return content
 
 
 @dataclass
@@ -37,20 +129,20 @@ class Agent(ABC):
         role: AgentRole,
         tools: List[str],
         public_only: bool = True,
+        llm_backend: Optional[LLMBackend] = None,
     ):
-        """
-        Initialize agent.
-
-        Args:
-            agent_id: Unique agent identifier
-            role: Agent role
-            tools: List of available tool names
-            public_only: If True, only public communications allowed
-        """
         self.agent_id = agent_id
         self.role = role
         self.tools = tools
         self.public_only = public_only
+        self.llm = llm_backend or SimulatedLLMBackend()
+        self._max_tokens_override: Optional[int] = None
+
+    def _get_max_tokens(self, default: int = 512) -> int:
+        """Get effective max_tokens, respecting CoAP budget override."""
+        if self._max_tokens_override is not None:
+            return self._max_tokens_override
+        return default
 
     @abstractmethod
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -70,16 +162,17 @@ class Agent(ABC):
 class HeraldAgent(Agent):
     """LIGHTBULB Herald: Introduction agent."""
 
-    def __init__(self, agent_id: str = "herald_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "herald_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.HERALD,
             tools=["write_intro", "read_lead"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
-        """Get Herald prompt."""
         page_title = context.get("page_title", "")
         lead_intro = context.get("lead_intro", "")
         lead_sha256 = context.get("lead_sha256", "")
@@ -105,14 +198,14 @@ Invariants:
 Output: A reader-facing introduction and a question slate (open_qs) for downstream agents."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Herald task."""
-        # In production, would call LLM here
-        # For now, return structured handoff
+        context = {"page_title": handoff.metadata.get("page_title", "") if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Herald: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="architect",
             surface=Surface.INTRO,
-            content="[Introduction content would be generated here]",
+            content=content,
             metadata={"role": "herald"},
             open_questions=["What sections should be included?", "What is the logical flow?"],
         )
@@ -121,16 +214,17 @@ Output: A reader-facing introduction and a question slate (open_qs) for downstre
 class ArchitectAgent(Agent):
     """PROJECT-DIAGRAM Architect: Outline & Structure agent."""
 
-    def __init__(self, agent_id: str = "architect_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "architect_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.ARCHITECT,
             tools=["write_outline", "read_intro"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
-        """Get Architect prompt."""
         intro_content = context.get("intro_content", "")
 
         return f"""You are the Architect agent. Your role is to propose section headers and logical flow.
@@ -139,7 +233,7 @@ Input: Herald's introduction
 {intro_content}
 
 Mandate:
-- Propose section headers and logical flow (Background → Methods/Mechanism → Evidence → Implications)
+- Propose section headers and logical flow (Background -> Methods/Mechanism -> Evidence -> Implications)
 - Ensure progressive disclosure and cross-section coherence
 - Enforce narrative cohesion
 
@@ -150,12 +244,14 @@ Invariants:
 Output: A signed outline artifact (OUTLINE.vN) and a list of evidence gaps."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Architect task."""
+        context = {"intro_content": handoff.content if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Architect outline: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="scribe",
             surface=Surface.OUTLINE,
-            content="[Outline content would be generated here]",
+            content=content,
             metadata={"role": "architect"},
             open_questions=["What evidence is needed for each section?"],
         )
@@ -164,12 +260,14 @@ Output: A signed outline artifact (OUTLINE.vN) and a list of evidence gaps."""
 class ScribeAgent(Agent):
     """File Scribe: Main Body agent."""
 
-    def __init__(self, agent_id: str = "scribe_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "scribe_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.SCRIBE,
             tools=["write_body", "read_outline", "read_citations"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -197,12 +295,14 @@ Invariants:
 Output: Well-developed body content with citations."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Scribe task."""
+        context = {"outline": handoff.content if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Scribe body: {prompt}", max_tokens=self._get_max_tokens(768))
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="arbiter",
             surface=Surface.BODY,
-            content="[Body content would be generated here]",
+            content=content,
             metadata={"role": "scribe"},
             open_questions=["Is the tone neutral?", "Are there style violations?"],
         )
@@ -211,12 +311,14 @@ Output: Well-developed body content with citations."""
 class ArchivistAgent(Agent):
     """BOOK Archivist: References agent."""
 
-    def __init__(self, agent_id: str = "archivist_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "archivist_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.ARCHIVIST,
             tools=["write_citations", "read_body", "read_sources"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -235,12 +337,14 @@ Mandate:
 Output: Citation graph with claim→cite bindings."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Archivist task."""
+        context = {"body_content": handoff.content if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Archivist citation: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="verifier",
             surface=Surface.CITATION_GRAPH,
-            content="[Citation graph would be generated here]",
+            content=content,
             metadata={"role": "archivist"},
             open_questions=["Are all claims verifiable?"],
         )
@@ -249,12 +353,14 @@ Output: Citation graph with claim→cite bindings."""
 class VerifierAgent(Agent):
     """SEARCH Verifier: Fact-checking agent."""
 
-    def __init__(self, agent_id: str = "verifier_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "verifier_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.VERIFIER,
             tools=["verify_claim", "write_fact_ledger", "read_body", "retrieve_evidence"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -274,12 +380,14 @@ Mandate:
 Output: Fact ledger entries with verification status (ENTAIL/CONTRADICT/UNSURE)."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Verifier task."""
+        context = {"claims": []}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Verifier fact_check: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="arbiter",
             surface=Surface.FACT_LEDGER,
-            content="[Fact ledger entries would be generated here]",
+            content=content,
             metadata={"role": "verifier"},
             open_questions=["Are there any contradictions?"],
         )
@@ -288,12 +396,14 @@ Output: Fact ledger entries with verification status (ENTAIL/CONTRADICT/UNSURE).
 class ArbiterAgent(Agent):
     """Balance-Scale Arbiter: Neutrality & Style agent."""
 
-    def __init__(self, agent_id: str = "arbiter_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "arbiter_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.ARBITER,
             tools=["write_style_report", "read_body", "read_fact_ledger"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -314,12 +424,14 @@ Mandate:
 Output: Style report with neutrality score and violations."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Arbiter task."""
+        context = {"body_content": handoff.content if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Arbiter style: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
             to_agent="summarist",
             surface=Surface.STYLE_REPORT,
-            content="[Style report would be generated here]",
+            content=content,
             metadata={"role": "arbiter"},
             open_questions=["Is the content ready for summarization?"],
         )
@@ -328,12 +440,14 @@ Output: Style report with neutrality score and violations."""
 class SummaristAgent(Agent):
     """STICKY-NOTE Summarist: Summaries agent."""
 
-    def __init__(self, agent_id: str = "summarist_1", public_only: bool = True):
+    def __init__(self, agent_id: str = "summarist_1", public_only: bool = True,
+                 llm_backend: Optional[LLMBackend] = None):
         super().__init__(
             agent_id=agent_id,
             role=AgentRole.SUMMARIST,
             tools=["write_summary", "read_body", "read_style_report"],
             public_only=public_only,
+            llm_backend=llm_backend,
         )
 
     def get_prompt(self, context: Dict[str, Any]) -> str:
@@ -358,18 +472,25 @@ Invariants:
 Output: Publication-ready abstract and TL;DR bundle."""
 
     def process(self, handoff: Optional[AgentHandoff]) -> AgentHandoff:
-        """Process Summarist task."""
+        context = {"body_content": handoff.content if handoff else ""}
+        prompt = self.get_prompt(context)
+        content = self.llm.generate(f"Summarist summary: {prompt}", max_tokens=self._get_max_tokens())
         return AgentHandoff(
             from_agent=self.agent_id,
-            to_agent="",  # End of pipeline
+            to_agent="",
             surface=Surface.SUMMARY,
-            content="[Summary content would be generated here]",
+            content=content,
             metadata={"role": "summarist"},
             open_questions=[],
         )
 
 
-def create_agent(role: AgentRole, agent_id: Optional[str] = None, public_only: bool = True) -> Agent:
+def create_agent(
+    role: AgentRole,
+    agent_id: Optional[str] = None,
+    public_only: bool = True,
+    llm_backend: Optional[LLMBackend] = None,
+) -> Agent:
     """Factory function to create agents."""
     agent_map = {
         AgentRole.HERALD: HeraldAgent,
@@ -385,6 +506,7 @@ def create_agent(role: AgentRole, agent_id: Optional[str] = None, public_only: b
     if not agent_class:
         raise ValueError(f"Unknown role: {role}")
 
+    kwargs: Dict[str, Any] = {"public_only": public_only, "llm_backend": llm_backend}
     if agent_id:
-        return agent_class(agent_id=agent_id, public_only=public_only)
-    return agent_class(public_only=public_only)
+        kwargs["agent_id"] = agent_id
+    return agent_class(**kwargs)

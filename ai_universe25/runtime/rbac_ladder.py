@@ -226,7 +226,7 @@ class LadderFSM:
             return PolicyDecision(allowed=True)  # No surface restriction
 
         surface = envelope.surface
-        permission = Permission(action.upper())
+        permission = Permission(action)
 
         # Invariant I3: Append-only surfaces always allow append
         if surface in APPEND_ONLY_SURFACES and permission == Permission.APPEND:
@@ -340,7 +340,7 @@ class RBACLadderEnforcer:
             return True  # No surface restriction
 
         role = self.get_role(agent_id)
-        permission = Permission(action.upper())
+        permission = Permission(action)
         return self.rbac_matrix.check(role, surface, permission)
 
     async def check_ladder(self, envelope: Envelope) -> PolicyDecision:

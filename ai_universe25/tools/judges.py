@@ -7,12 +7,15 @@ Implements:
 - CoAP: Compute Allocation Panel (EWMA+monotone allocator+hysteresis+slow-start)
 """
 
+import json
 import logging
+import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -47,21 +50,122 @@ class QualityScore:
         )
 
 
+class _LLMBackendProto(Protocol):
+    def generate(self, prompt: str, max_tokens: int = 512) -> str: ...
+
+
 @dataclass
 class JudgeBackend:
-    """Pluggable judge backend (API or local)."""
+    """Pluggable judge backend that uses an LLM (or heuristics as fallback)."""
 
     name: str
     model: str
+    llm_backend: Optional[Any] = field(default=None, repr=False)
+
+    _RUBRIC_PROMPT = """You are a wiki content quality judge. Score the following content on four dimensions, each from 0.0 to 1.0.
+
+Dimensions:
+- coverage: How well does the content cover the topic? (breadth, depth, completeness)
+- correctness: Are the claims factually plausible and internally consistent?
+- coherence: Is the writing logically organized and easy to follow?
+- citation_integrity: Are claims backed by citations or evidence markers?
+
+Content to evaluate:
+---
+{content}
+---
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{{"coverage": 0.XX, "correctness": 0.XX, "coherence": 0.XX, "citation_integrity": 0.XX}}"""
 
     def score(self, content: str, rubric: Dict[str, Any]) -> QualityScore:
-        """Score content (placeholder - would call actual LLM)."""
-        # Placeholder: random scores for demo
+        """Score content using the LLM backend, falling back to heuristics."""
+        if self.llm_backend is not None:
+            return self._score_with_llm(content)
+        return self._score_heuristic(content)
+
+    def _score_with_llm(self, content: str) -> QualityScore:
+        """Score content by asking the LLM judge."""
+        truncated = content[:2000]
+        prompt = self._RUBRIC_PROMPT.format(content=truncated)
+        try:
+            raw = self.llm_backend.generate(prompt, max_tokens=150)
+            return self._parse_llm_scores(raw)
+        except Exception as e:
+            logger.warning(f"Judge {self.name} LLM call failed ({e}), using heuristic")
+            return self._score_heuristic(content)
+
+    @staticmethod
+    def _parse_llm_scores(raw: str) -> QualityScore:
+        """Parse JSON scores from LLM response, with robust fallback."""
+        json_match = re.search(r'\{[^}]+\}', raw)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                def _clamp(v):
+                    try:
+                        return max(0.0, min(1.0, float(v)))
+                    except (TypeError, ValueError):
+                        return 0.5
+                return QualityScore(
+                    coverage=_clamp(data.get("coverage", 0.5)),
+                    correctness=_clamp(data.get("correctness", 0.5)),
+                    coherence=_clamp(data.get("coherence", 0.5)),
+                    citation_integrity=_clamp(data.get("citation_integrity", 0.5)),
+                )
+            except json.JSONDecodeError:
+                pass
+        nums = re.findall(r'0\.\d+', raw)
+        if len(nums) >= 4:
+            return QualityScore(
+                coverage=float(nums[0]),
+                correctness=float(nums[1]),
+                coherence=float(nums[2]),
+                citation_integrity=float(nums[3]),
+            )
+        return QualityScore(coverage=0.5, correctness=0.5, coherence=0.5, citation_integrity=0.5)
+
+    @staticmethod
+    def _score_heuristic(content: str) -> QualityScore:
+        """Content-aware heuristic scoring (no LLM needed)."""
+        if not content or not content.strip():
+            return QualityScore(coverage=0.1, correctness=0.1, coherence=0.1, citation_integrity=0.1)
+
+        words = content.split()
+        n_words = len(words)
+        sentences = [s.strip() for s in re.split(r'[.!?]+', content) if s.strip()]
+        n_sentences = max(len(sentences), 1)
+
+        # Coverage: based on content length (diminishing returns)
+        coverage = min(1.0, 0.2 + 0.8 * (1 - math.exp(-n_words / 150)))
+
+        # Coherence: sentence length consistency + paragraph structure
+        avg_sent_len = n_words / n_sentences
+        sent_len_penalty = max(0, abs(avg_sent_len - 18) - 8) / 30
+        has_structure = any(
+            marker in content for marker in ['#', '1.', '- ', '**', '\n\n']
+        )
+        coherence = min(1.0, 0.4 + (0.3 if has_structure else 0.0) - sent_len_penalty
+                        + 0.3 * min(1.0, n_sentences / 5))
+
+        # Correctness: penalize hedging and unsupported claims
+        hedge_words = sum(1 for w in words if w.lower() in {
+            'maybe', 'perhaps', 'possibly', 'might', 'could', 'seems',
+        })
+        hedge_rate = hedge_words / max(n_words, 1)
+        correctness = max(0.2, 0.85 - hedge_rate * 5)
+
+        # Citation integrity: presence of citation markers
+        cite_patterns = len(re.findall(
+            r'\[CITE|\[[\d]+\]|\(\d{4}\)|et al\.|ENTAIL|CONTRADICT|doi:', content
+        ))
+        citation_integrity = min(1.0, 0.2 + cite_patterns * 0.15)
+
         return QualityScore(
-            coverage=random.uniform(0.6, 1.0),
-            correctness=random.uniform(0.7, 1.0),
-            coherence=random.uniform(0.6, 1.0),
-            citation_integrity=random.uniform(0.5, 1.0),
+            coverage=round(min(1.0, max(0.0, coverage)), 4),
+            correctness=round(min(1.0, max(0.0, correctness)), 4),
+            coherence=round(min(1.0, max(0.0, coherence)), 4),
+            citation_integrity=round(min(1.0, max(0.0, citation_integrity)), 4),
         )
 
 
@@ -69,27 +173,30 @@ class ContentQualityPanel:
     """
     Content Quality Panel (CQP).
 
-    Uses three LLM judges (GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro) in
-    pairwise comparison protocol. Votes by majority; ties broken by GPT-4o.
+    Uses three LLM judges in pairwise comparison protocol.
+    Votes by majority; ties broken by the first judge.
+    When no LLM backends are provided, uses content-aware heuristic scoring.
     """
 
     def __init__(
         self,
         judges: Optional[List[JudgeBackend]] = None,
         tie_breaker: Optional[str] = None,
+        llm_backend=None,
     ):
         """
         Initialize CQP.
 
         Args:
-            judges: List of judge backends (default: create 3)
+            judges: List of judge backends (default: create 3 heuristic judges)
             tie_breaker: Name of tie-breaker judge (default: first judge)
+            llm_backend: If provided, all default judges use this LLM for scoring
         """
         if judges is None:
             judges = [
-                JudgeBackend(name="gpt4o", model="gpt-4o"),
-                JudgeBackend(name="claude35", model="claude-3-5-sonnet"),
-                JudgeBackend(name="gemini15", model="gemini-1.5-pro"),
+                JudgeBackend(name="judge_1", model="heuristic", llm_backend=llm_backend),
+                JudgeBackend(name="judge_2", model="heuristic", llm_backend=llm_backend),
+                JudgeBackend(name="judge_3", model="heuristic", llm_backend=llm_backend),
             ]
         self.judges = judges
         self.tie_breaker = tie_breaker or (judges[0].name if judges else None)

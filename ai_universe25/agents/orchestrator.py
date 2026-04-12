@@ -33,6 +33,7 @@ class AgentOrchestrator:
     - Structured handoffs between agents
     - Public-only vs public+DM communication constraints
     - Tool access control
+    - CAP priority ordering (higher-priority agents execute first)
     """
 
     def __init__(self, public_only: bool = True):
@@ -45,6 +46,7 @@ class AgentOrchestrator:
         self.public_only = public_only
         self.agents: Dict[str, Agent] = {}
         self.handoff_history: List[AgentHandoff] = []
+        self.priority_order: Optional[List[str]] = None
 
     def register_agent(self, agent: Agent):
         """Register an agent."""
