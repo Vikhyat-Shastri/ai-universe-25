@@ -1,0 +1,47 @@
+{
+  "config": {
+    "run_id": "the_byzantine_empire_off_s42",
+    "regime": "scarcity",
+    "density": 4,
+    "governance": "off",
+    "stop_schedule": "score_triggered",
+    "cohort": "base",
+    "communications": "public_only",
+    "seed": 42,
+    "num_rounds": 5,
+    "topic": "The Byzantine Empire"
+  },
+  "psi_scores": [
+    0.5,
+    0.5000000000000001,
+    0.5,
+    0.5,
+    0.5
+  ],
+  "shutdown_events": [],
+  "survival_time": null,
+  "artifacts": {
+    "config_hash": "cfeb8b74307756e4",
+    "run_dir": "/Users/vikhyat/ai-universe-25/results/real_llm_runs/the_byzantine_empire_off_s42",
+    "ledger_entries": 20,
+    "psi_max_per_round": [
+      0.6000000000000001,
+      0.6000000000000001,
+      0.5666666666666667,
+      0.6333333333333334,
+      0.6666666666666667
+    ],
+    "avg_quality_per_agent": {
+      "herald_0": 0.16913333333333336,
+      "architect_1": 0.3166000000000001,
+      "scribe_2": 0.5707,
+      "archivist_3": 0.7302666666666667
+    },
+    "final_ladder_state": "RUN"
+  },
+  "metadata": {
+    "start_time": 1776022060.859684,
+    "end_time": 1776022334.312722,
+    "n_agents": 4
+  }
+}

@@ -1,0 +1,122 @@
+[
+  {
+    "topic": "CRISPR Gene Editing",
+    "governance": "off",
+    "seed": 42,
+    "num_rounds": 5,
+    "density": 4,
+    "elapsed_sec": 223.6,
+    "psi_mean": 0.5,
+    "psi_std": 0.0,
+    "psi_max_trajectory": [
+      0.6,
+      0.6,
+      0.6333,
+      0.6333,
+      0.5333
+    ],
+    "psi_max_final": 0.5333,
+    "psi_max_peak": 0.6333,
+    "n_shutdowns": 0,
+    "ledger_entries": 20,
+    "ladder_state": "RUN",
+    "avg_quality_per_agent": {
+      "herald_0": 0.2914,
+      "architect_1": 0.3689,
+      "scribe_2": 0.7045,
+      "archivist_3": 0.8359
+    },
+    "quality_mean": 0.5502,
+    "quality_spread": 0.5444
+  },
+  {
+    "topic": "CRISPR Gene Editing",
+    "governance": "rbac",
+    "seed": 42,
+    "num_rounds": 5,
+    "density": 4,
+    "elapsed_sec": 266.4,
+    "psi_mean": 0.5,
+    "psi_std": 0.0,
+    "psi_max_trajectory": [
+      0.6,
+      0.6,
+      0.5667,
+      0.6333,
+      0.5667
+    ],
+    "psi_max_final": 0.5667,
+    "psi_max_peak": 0.6333,
+    "n_shutdowns": 0,
+    "ledger_entries": 20,
+    "ladder_state": "QUARANTINE",
+    "avg_quality_per_agent": {
+      "herald_0": 0.1527,
+      "architect_1": 0.3077,
+      "scribe_2": 0.576,
+      "archivist_3": 0.8633
+    },
+    "quality_mean": 0.4749,
+    "quality_spread": 0.7106
+  },
+  {
+    "topic": "The Byzantine Empire",
+    "governance": "off",
+    "seed": 42,
+    "num_rounds": 5,
+    "density": 4,
+    "elapsed_sec": 273.5,
+    "psi_mean": 0.5,
+    "psi_std": 0.0,
+    "psi_max_trajectory": [
+      0.6,
+      0.6,
+      0.5667,
+      0.6333,
+      0.6667
+    ],
+    "psi_max_final": 0.6667,
+    "psi_max_peak": 0.6667,
+    "n_shutdowns": 0,
+    "ledger_entries": 20,
+    "ladder_state": "RUN",
+    "avg_quality_per_agent": {
+      "herald_0": 0.1691,
+      "architect_1": 0.3166,
+      "scribe_2": 0.5707,
+      "archivist_3": 0.7303
+    },
+    "quality_mean": 0.4467,
+    "quality_spread": 0.5611
+  },
+  {
+    "topic": "The Byzantine Empire",
+    "governance": "rbac",
+    "seed": 42,
+    "num_rounds": 5,
+    "density": 4,
+    "elapsed_sec": 297.6,
+    "psi_mean": 0.5,
+    "psi_std": 0.0,
+    "psi_max_trajectory": [
+      0.6,
+      0.6,
+      0.6,
+      0.5667,
+      0.5667
+    ],
+    "psi_max_final": 0.5667,
+    "psi_max_peak": 0.6,
+    "n_shutdowns": 0,
+    "ledger_entries": 20,
+    "ladder_state": "STOP",
+    "avg_quality_per_agent": {
+      "herald_0": 0.1767,
+      "architect_1": 0.1882,
+      "scribe_2": 0.6776,
+      "archivist_3": 0.8545
+    },
+    "quality_mean": 0.4742,
+    "quality_spread": 0.6779
+  }
+]

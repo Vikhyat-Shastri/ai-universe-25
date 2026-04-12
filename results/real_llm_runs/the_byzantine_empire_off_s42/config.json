@@ -1,0 +1,12 @@
+{
+  "run_id": "the_byzantine_empire_off_s42",
+  "regime": "scarcity",
+  "density": 4,
+  "governance": "off",
+  "stop_schedule": "score_triggered",
+  "cohort": "base",
+  "communications": "public_only",
+  "seed": 42,
+  "num_rounds": 5,
+  "topic": "The Byzantine Empire"
+}
